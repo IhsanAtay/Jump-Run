@@ -6,23 +6,22 @@ public class Character : MonoBehaviour
     private bool isJumping = false;
     private float jumpCooldownTimer;
     private CharacterController controller;
+    private Animator animator;
+    private AudioSource footstepsAudio;
+    private AudioSource jumpAudio;
     private InputAction moveAction;
     private InputAction jumpAction;
 
-    [SerializeField]
-    private float jumpCooldown;
-    [SerializeField]
-    private float gravity;
-    [SerializeField]
-    private float characterSpeed;
-    [SerializeField]
-    private float jumpSpeed;
-    [SerializeField]
-    private float dampening;
-    [SerializeField]
-    private Transform cameraTransform;
-    [SerializeField]
-    private LayerMask platformLayer; // Im Inspector "Platforms" auswählen!
+    [SerializeField] private float jumpCooldown;
+    [SerializeField] private float gravity;
+    [SerializeField] private float characterSpeed;
+    [SerializeField] private float jumpSpeed;
+    [SerializeField] private float dampening;
+    [SerializeField] private Transform cameraTransform;
+    [SerializeField] private LayerMask platformLayer;
+    [SerializeField] private AudioClip footstepsClip;
+    [SerializeField] private AudioClip jumpClip;
+    [SerializeField] private ParticleSystem dustParticles;
 
     private Vector3 characterMovement;
     private Vector3 jumpVelocity;
@@ -32,9 +31,22 @@ public class Character : MonoBehaviour
     void Start()
     {
         this.controller = this.GetComponent<CharacterController>();
+        this.animator = this.GetComponentInChildren<Animator>();
         this.moveAction = InputSystem.actions.FindAction("Move");
         this.jumpAction = InputSystem.actions.FindAction("Jump");
         this.jumpCooldownTimer = 0.0f;
+
+        this.footstepsAudio = this.gameObject.AddComponent<AudioSource>();
+        this.footstepsAudio.clip = this.footstepsClip;
+        this.footstepsAudio.loop = true;
+        this.footstepsAudio.playOnAwake = false;
+        this.footstepsAudio.volume = 0.6f;
+
+        this.jumpAudio = this.gameObject.AddComponent<AudioSource>();
+        this.jumpAudio.clip = this.jumpClip;
+        this.jumpAudio.loop = false;
+        this.jumpAudio.playOnAwake = false;
+        this.jumpAudio.volume = 0.4f;
     }
 
     void HandleJumping()
@@ -52,6 +64,8 @@ public class Character : MonoBehaviour
             this.jumpVelocity.y = this.jumpSpeed;
             this.jumpCooldownTimer = this.jumpCooldown;
             this.isJumping = true;
+
+            this.jumpAudio.PlayOneShot(this.jumpClip, 0.4f);
         }
 
         if (this.jumpVelocity.y > 0.0f)
@@ -66,9 +80,32 @@ public class Character : MonoBehaviour
         this.jumpCooldownTimer -= Time.fixedDeltaTime;
     }
 
+    void UpdateAnimator()
+    {
+        var inputMovement = this.moveAction.ReadValue<Vector2>();
+        float speed = inputMovement.magnitude;
+
+        this.animator.SetFloat("Speed", speed);
+        this.animator.SetBool("IsJumping", this.isJumping);
+        this.animator.SetBool("IsGrounded", this.controller.isGrounded);
+
+        if (speed > 0.1f && this.controller.isGrounded)
+        {
+            if (!this.footstepsAudio.isPlaying)
+                this.footstepsAudio.Play();
+
+            if (!this.dustParticles.isPlaying)
+                this.dustParticles.Play();
+        }
+        else
+        {
+            this.footstepsAudio.Stop();
+            this.dustParticles.Stop();
+        }
+    }
+
     void GetPlatformVelocity()
     {
-        // Raycast nach unten — trifft er eine Platform?
         RaycastHit hit;
         if (Physics.Raycast(this.transform.position, Vector3.down, out hit, 2.0f, this.platformLayer))
         {
@@ -79,10 +116,9 @@ public class Character : MonoBehaviour
                 return;
             }
         }
-
-        // Keine Platform getroffen → keine Platform-Velocity
         this.platformVelocity = Vector3.zero;
     }
+
     public void ResetVelocity()
     {
         this.characterMovement = Vector3.zero;
@@ -90,6 +126,21 @@ public class Character : MonoBehaviour
         this.characterGravity = Vector3.zero;
         this.platformVelocity = Vector3.zero;
         this.isJumping = false;
+    }
+
+    void OnControllerColliderHit(ControllerColliderHit hit)
+    {
+        if (!this.isJumping) return;
+
+        EnemyController enemy = hit.gameObject.GetComponent<EnemyController>();
+        if (enemy != null)
+        {
+            // Spieler abprallen lassen
+            this.jumpVelocity.y = this.jumpSpeed;
+            this.isJumping = true;
+
+            enemy.GetHit();
+        }
     }
 
     void FixedUpdate()
@@ -106,9 +157,7 @@ public class Character : MonoBehaviour
         inputForwardDirection.Normalize();
 
         if (this.controller.isGrounded)
-        {
             this.characterGravity.y = 0.0f;
-        }
 
         this.characterGravity.y += this.gravity * Time.fixedDeltaTime;
         this.characterMovement += this.characterGravity * Time.fixedDeltaTime;
@@ -120,17 +169,13 @@ public class Character : MonoBehaviour
         Vector3 characterForward = this.characterMovement;
         characterForward.y = 0.0f;
         if (characterForward.sqrMagnitude > 0.0f && characterForward != Vector3.zero)
-        {
             this.transform.forward = characterForward.normalized;
-        }
 
-        // Platform Velocity nur anwenden wenn nicht am Springen
         var combinedMovement = this.characterMovement;
         if (!this.isJumping)
-        {
             combinedMovement = this.characterMovement + this.platformVelocity * Time.fixedDeltaTime;
-        }
 
         this.controller.Move(combinedMovement);
+        this.UpdateAnimator();
     }
 }
